@@ -8859,6 +8859,9 @@ jQuery(document).ready(function($){
 			$(this).children().unwrap();
 		})
 
+		// add an exit editor button
+		$('.lasso--controls__right ').prepend('<a title="Exit Editor" id="lasso--exit" href="#"></a>');
+
 		// append the toolbar to any components that dont have them
 		// @todo - this likely needs to be changed to a lasso- namespaced item which then needs to be updated in Aesop Story Engine
 		$('.aesop-component').each(function(){
@@ -9077,7 +9080,7 @@ jQuery(document).ready(function($){
 
 			$('body').removeClass('lasso-sidebar-open lasso-editing');
 
-			$('.lasso--toolbar_wrap, #lasso--sidebar, #lasso--featImgControls, #lasso--wpimg-edit').fadeOut().remove();
+			$('.lasso--toolbar_wrap, #lasso--sidebar, #lasso--featImgControls, #lasso--wpimg-edit, #lasso--exit').fadeOut().remove();
 
 			$('#lasso--edit').css('opacity',1);
 			$('.lasso--controls__right').css('opacity',0);
@@ -9116,6 +9119,18 @@ jQuery(document).ready(function($){
 			e.preventDefault();
 			exitEditor();
 		})
+
+		// on control s save
+		$(document).keydown(function(e) {
+		    if ((e.which == '115' || e.which == '83' ) && (e.ctrlKey || e.metaKey)){
+		        e.preventDefault();
+		        	
+		        $('.lasso-editing #lasso--save').trigger('click')
+
+		        return false;
+		    }
+		    return true;
+		});
 
 		///////////
 		// INITIALIZE TIMELINE
@@ -9357,6 +9372,7 @@ jQuery(document).ready(function($){
 			placeholder:'lasso-drop-zone',
 			handle: '.lasso-drag',
             cursor:'move',
+            tolerance:'pointer',
             refreshPositions: true,
             helper: function( e, ui ) {
 
@@ -10395,7 +10411,7 @@ jQuery(document).ready(function($){
 	///////////////////////
 	// 3. SAVE OR PUBLISH OBJECT
 	///////////////////////
-	$(save).live('click',function(e) {
+	$('.lasso--controls__right a:not(#lasso--exit)').live('click',function(e) {
 
 		var warnNoSave = null;
 
@@ -10465,13 +10481,21 @@ jQuery(document).ready(function($){
 			},
 			function(){
 
-				runSavePublish()
+				if ( lasso_editor.can_publish_posts ) {
+
+					runSavePublish()
+
+				}
 
 			});
 
 		} else {
 
-			runSavePublish()
+			if ( lasso_editor.can_publish_posts ) {
+
+				runSavePublish()
+
+			}
 
 		}
 
@@ -11416,6 +11440,197 @@ jQuery(document).ready(function($){
 	});
 
 })( jQuery );
+(function( $, Backbone, _, WP_API_Settings, undefined ) {
+
+	var contentTemplate = $('#lasso-tmpl--post' )
+	, 	postTemplate 	= _.template( contentTemplate.html() )
+	, 	posts 			= new wp.api.collections.Posts()
+	,	pages 			= new wp.api.collections.Pages()
+	,	postAll         = $('#lasso--post-all')
+	,	postList        = '#lasso--post-list'
+	,	body 			= $('body')
+	,	noPostsMessage  = '<li>No posts found</li>'
+	, 	loader			= '<div id="lasso--loading" class="lasso--loading"><div class="lasso--loader"></div></div>'
+	,	moreButton      = '<a href="#" id="lasso--load-more">Load More</a>'
+	,	page 			= 1
+
+	// infinite load options
+	var options = {
+		data: {
+			page: WP_API_Settings.page || 2,
+			filter: {
+				post_status: ['publish','draft','pending'] 
+			}
+		}
+	}
+
+	//////////////////
+	// DESTROY LOADER
+	/////////////////
+	function destroyLoader(){
+		$('#lasso--loading').remove()
+	}
+
+	//////////////////
+	// FETCH POSTS HELPER FUNCTION
+	/////////////////
+	function fetchPosts( type ){
+
+		if ( 'posts' == type ) {
+
+			type 	= posts
+			capable = lasso_editor.edit_others_posts
+
+		} else if ( 'pages' == type ) {
+
+			type 	= pages
+			capable = lasso_editor.edit_others_pages
+
+		}
+
+		// get the posts
+		type.fetch( options ).done( function() {
+
+			// if we hvae more posts then load them
+			if ( type.length > 0 ) {
+
+		    	$(postList).append( moreButton );
+
+		    	loadPosts( type )
+
+		    	// trigger a click on the load more to load teh first set?
+		    	$('#lasso--load-more').trigger('click')
+		    }
+
+		    // destroy the spinny loader
+		    destroyLoader()
+
+		});
+	}
+
+	//////////////////
+	// LOAD MORE CLICK EVENT
+	/////////////////
+	function loadPosts( type ){
+
+		$(postList).on('click','#lasso--load-more', function(e){
+
+			e.preventDefault()
+
+			$('#lasso--load-more').hide();
+
+			var setContainer = $( '<div data-page-num="' + type.state.currentPage + '" class="lasso--object-batch"></div>' )
+
+			type.each( function( model ) {
+
+				setContainer.append( postTemplate( { post: model.attributes, settings: WP_API_Settings } ) )
+
+			})
+
+			// append to the post container
+			$(postList).append( setContainer );
+
+			// if there are more posts then load them
+			if ( type.hasMore() ) {
+
+				type.more().done( function() {
+
+					// destroy the loader
+					destroyLoader()
+
+					// append the more button then show
+					$(moreButton).appendTo( $(postList) ).show()
+
+				})
+
+			}
+
+		})
+
+	}
+
+
+	//////////////////
+	// OPEN INITIAL POSTS
+	/////////////////
+	postAll.live('click',function(e){
+
+		e.preventDefault();
+
+		// add a body class
+		body.toggleClass('lasso-modal-open');
+
+		// append teh modal markup ( lasso_editor_component_modal() )
+		body.append( lasso_editor.allPostModal );
+
+		// get the intial posts
+		fetchPosts('posts')
+
+		$(postList).perfectScrollbar({
+			suppressScrollX: true
+		});
+
+	})
+
+	//////////////////
+	// SHOW POST/PAGES
+	/////////////////
+	$('.lasso--show-objects').live('click',function(e){
+
+		e.preventDefault();
+
+		$('.lasso--show-objects').removeClass('active')
+		$(this).addClass('active');
+
+		$('#lasso--post-list > li').remove();
+
+		$(postList).prepend( loader )
+
+		fetchPosts( $(this).data('post-type') )
+
+	});
+
+	//////////////////
+	// DELETE POST
+	/////////////////
+	$('#lasso--post__delete').live('click',function(e){
+
+		e.preventDefault();
+
+		var $this = $(this);
+
+		swal({
+			title: lasso_editor.strings.deletePost,
+			type: "error",
+			text: false,
+			showCancelButton: true,
+			confirmButtonColor: "#d9534f",
+			confirmButtonText: lasso_editor.strings.deleteYes,
+			closeOnConfirm: true
+		},
+		function(){
+
+			var data = {
+				action: 		'process_delete_post',
+				postid: 		$this.closest('a').data('postid'),
+				nonce: 			lasso_editor.deletePost
+			}
+
+			$.post( lasso_editor.ajaxurl, data, function(response) {
+
+				if ( true == response.success ) {
+
+					$this.closest('li').fadeOut().remove()
+
+				}
+
+			});
+
+		});
+
+	})
+
+})( jQuery, Backbone, _, WP_API_Settings );
 (function( $ ) {
 
 	$(document).ready(function(){
